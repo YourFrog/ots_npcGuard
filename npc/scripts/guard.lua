@@ -1,309 +1,127 @@
-Leaf = {}
-Path = {}
-aStar = {}
-speeches = {}
 
--- Pojedyńczy liść ze scieżki
-function Leaf:new(data)
-	local instance = {
-	
-		-- Rodzic z którego na dany kafel wejdziemy
-		previous = nil,
-		
-		-- Potomek na którego wejdziemy z liścia
-		next = nil,
-		
-		-- Informacje o obecnym lisciu
-		data = data or nil
-	}
-	
-	setmetatable(instance, self)
-	self.__index = self
-	
-	return instance
-end
+dofile('data/npc/lib/behavior/leaf.lua')
+dofile('data/npc/lib/behavior/path.lua')
+dofile('data/npc/lib/behavior/aStar.lua')
+dofile('data/npc/lib/behavior/speeches.lua')
 
-function Leaf:setData(node)
-	self.data = node
-end
 
-function Leaf:setNext(leaf)
-	self.next = leaf
-end
+local NPC_RUNNING_STOP = 0
+local NPC_RUNNING_FOLLOW = 1
+local NPC_RUNNING_BACK = 2
 
-function Leaf:getNext(leaf)
-	return self.next
-end
+-- Wszystkie NPC obsługiwane przez skrypt
+local npcs = {}
 
-function Leaf:setPrevious(leaf)
-	self.previous = leaf
-end
+NpcGuard = {}
 
-function Leaf:getPrevious()
-	return self.previous
-end
-
-function Leaf:getPosition()
-	return self.data.position
-end
-
--- Obsługa całej scieżki
-function Path:new(leaf)
+-- Utworzenie strażnika
+function NpcGuard:new(options)
 	local instance = {}
 	
 	setmetatable(instance, self)
 	self.__index = self
 	
-	-- Ustawienie pierwszego kroku
-	self.leaf = leaf
+	-- Przypisanie opcji do obiektu
+	self.options = options
 	
 	return instance
 end
 
--- Stworzenie pełnej scieżki ze zwrotki algorytmu odnajdywania
-function Path:createFromNode(node)
-	local leaf = Leaf:new(node)
-	
-	-- Szukamy kafelka od którego zaczelismy
-	while node.path do
-		local previous = Leaf:new()
-		
-		-- zapisujemy dane o node
-		leaf:setData(node)
-		previous:setData(node.path)
-		
-		-- Ustawiam relacje kafelków
-		leaf:setPrevious(previous)
-		previous:setNext(leaf)
-		
-		-- Poprzedni od teraz jest aktualnym
-		leaf = previous
-		
-		-- Przechodzimy do następnego
-		node = node.path
-	end
-	
-	-- Zwrócenie liścia od którego zaczynamy podróż
-	return Path:new(leaf)
+-- Uruchomienie przetwarzania skryptu dla NPC
+function NpcGuard:stateStart()
+	self.options.running = NPC_RUNNING_FOLLOW
 end
 
--- Wykonanie jednego kroku
-function Path:step(cid)
-	if self.leaf == nil then
-		-- Nie odnaleziono sciezki ktora mozna dotrzec do przeciwnika
+-- Całkowite zatrzymanie przetwarzania skryptu dla npc
+function NpcGuard:stateStop()
+	self.options.running = NPC_RUNNING_STOP
+end
+
+-- Powrót na miejsce docelowe
+function NpcGuard:stateBack()
+	self.options.running = NPC_RUNNING_BACK
+end
+
+-- Czy npc aktualnie za kimś podąża
+function NpcGuard:isStateFollow() 
+	return self.options.running == NPC_RUNNING_FOLLOW
+end
+
+-- Czy npc aktualnie wraca na miejsce
+function NpcGuard:isStateBack()
+	return self.options.running == NPC_RUNNING_BACK
+end
+
+-- Czy npc aktualnie jest aktywny
+function NpcGuard:isStateActive()
+	return self.options.running ~= NPC_RUNNING_STOP
+end
+
+-- Sprawdzenie czy znaleźliśmy jakąś istotę do zaatakowania
+function NpcGuard:isFoundTargetCreature()
+	if self.options.creatureTarget == nil then
 		return false
 	end
 	
-	-- Wykonanie kroku
-	doTeleportThing(cid, self.leaf:getPosition(), true)
-	
-	-- Przesunięcie pozycji
-	self.leaf = self.leaf:getNext()
-	
-	return true
+	return isCreature(self.options.creatureTarget)
 end
 
-function Path:isEmpty()
-	return self.leaf == nil or self.data == nil
+-- Zresetpwamoe celu na który polujemy
+function NpcGuard:resetTargetCreature()
+	self.options.creatureTarget = nil
 end
 
--- Algorytm odnajdywania drogi A*
-function aStar:new()
-	local instance = {}
-	
-	setmetatable(instance, self)
-	self.__index = self
-	
-	return instance
+-- Zresetowanie wszystkich ignorowanych kreatur 
+function NpcGuard:resetIgnoreCreatures()
+	self.options.ignoreCreatures = {}
 end
 
----
---	Funkcja wykorzystywana do odnalezienia drogi do celu który chcemy zaatakować. Oznacza to że zwraca drogę obok celu i na niego nie wchodzi.
---
--- basePosition -> centralna pozycja od której liczony jest zasięg areny 
--- startPosition -> Pozycja od której rozpoczynamy szukanie
--- targetPosition -> Pozycja do której zmierzamy
--- areaSize -> wielkość areny w której poszukujemy scieżki. 
-function aStar:findToAttack(startPosition, targetPosition, basePosition, areaSize)
-
-	local path = self:findToOccupy(startPosition, targetPosition, basePosition, areaSize)
+-- Poszukiwanie istoty do zaatakowania
+function NpcGuard:searchCreature()
+	local spectators = getSpectators(self.options.basePosition, self.options.config.scanArea, self.options.config.scanArea, false, false)
 	
-	return path
-end
-
----
---	Funkcja wykorzystywana do odnalezienia drogi do celu który chcemy zając. Oznacza to że zwraca drogę idealnie do miejsca które wskaźemy.
---
--- basePosition -> centralna pozycja od której liczony jest zasięg areny 
--- startPosition -> Pozycja od której rozpoczynamy szukanie
--- targetPosition -> Pozycja do której zmierzamy
--- areaSize -> wielkość areny w której poszukujemy scieżki. 
-function aStar:findToOccupy(startPosition, targetPosition, basePosition, areaSize)
-	-- Wierchołki wytypowane do sprawdzenia
-	local openPeak = { 
-		[startPosition.x .. "-" .. startPosition.y] = {["position"] = startPosition, ["cost"] = 0, ["path"] = nil}
-	}
+	if spectators == nil then
+		return nil
+	end
 	
-	local nodes = self:createNodes(startPosition, basePosition, areaSize)
+	for i = 1, #spectators do
+		local spectator = Creature(spectators[i])
 		
-	-- Pobranie punktu startowego
-	local current = self:firstPeak(openPeak)
-	local first = true
-	
-	while current ~= nil do	
-		local neighbors = self:neighborsPeak(nodes, current)
-				
-		if neighbors ~= nil then			
-			for _, peak in pairs(neighbors) do
-				if not first then
-					peak["path"] = current
-				end
-
-				-- Sprawdzenie czy wśród sąsiadów znajduje się nasz cel
-				if peak.position.x == targetPosition.x and peak.position.y == targetPosition.y then
-					-- Zwrócenie scieżki
-					return Path:createFromNode(peak)
-				end
-							
-				-- Dodajemy do wierzchołka scieżkę jak do niego doszliśmy i obliczamy koszt dotarcia
-				local cost = calculateCost(current, peak, creaturePosition)
-				
-				if cost ~= nil then
-					-- Musi byc koszt zebysmy uznali kafel za "chodzacy"
-					peak["cost"] = current["cost"] + cost
-					-- Och to nie był nasz cel. Należy dodać wierzchołek do listy 
-					local key = peak.position.x .. '-' .. peak.position.y
-					openPeak[key] = peak
-				end
-				
-				-- Usuwamy z wierzchołków sąsiada
-				self:removePeak(nodes, peak.position)
+		if self.options.ignoreCreatures[spectator:getId()] ~= 1 then 
+			-- Istota nie moze byc na ignorowanej liscie
+			local spectatorName = spectator:getName():lower()
+			
+			if spectator:isMonster() and self.options.config.ignoreMonsters[spectatorName] ~= true then
+				-- Odnalezliśmy potwora
+				return spectator:getId()
+			end
+			
+			if spectator:isPlayer() and spectator:getSkull() == (SKULL_WHITE or SKULL_RED) then
+				-- Odnalezliśmy gracza
+				return spectator:getId()
 			end
 		end
-			
-		first = false
-		self:removePeak(openPeak, current.position)
-		
-		-- Pobranie następnego elementu
-		current = self:firstPeak(openPeak)	
 	end
-	
-	-- Brak scieżki więc zwracamy pustą
-	return Path:new()
+
+	-- Brak odnalezionych celów
+	return nil
 end
 
--- Stworzenie areny którą przeszukujemy w celu odnalezienia drogi
-function aStar:createNodes(startPosition, centerPosition, areaSize)
-	-- Wyliczenie lewego górnego narożnika
-	local left = centerPosition.x - areaSize
-	local top = centerPosition.y - areaSize
-	
-	-- Wszystkie wierzchołki 
-	local nodes = {}
-	
-	-- Wyliczenie wszystkich wierzchołków
-	for i = 0, areaSize * 2 + 1, 1 do
-		for j = 0, areaSize * 2 + 1, 1 do
-			local x = left + i
-			local y = top + j
-			local key = x .. '-' .. y -- key is "x-y" position
-			
-			nodes[key] = {
-				["position"] = {
-					["x"] = left + i,
-					["y"] = top + j,
-					["z"] = startPosition.z
-				},
-				["cost"] = 0,
-				["path"] = nil
-			}
-		end
-	end
-	
-	-- Usuwamy z wierzchołków punkt startowy
-	self:removePeak(nodes, startPosition)
-	
-	return nodes
-end
-
-
--- Poszukiwanie wierzchołka o najmniejszym koszcie
-function aStar:firstPeak(openPeak)
-	local peak = nil
-	
-	for _, item in pairs(openPeak) do		
-		if peak == nil or peak.cost > item.cost then
-			peak = item
-		end
-	end
-	
-	return peak
-end
-
--- Odnalezienie sąsiadów na liście
-function aStar:neighborsPeak(peaks, current)
-	local isEmpty = true
-	local neighbors = {}
-	
-	local nodes = {
-		{["x"] = -1, ["y"] = -1},
-		{["x"] = 0, ["y"] = -1},
-		{["x"] = 1, ["y"] = -1},
-		
-		{["x"] = -1, ["y"] = 0},
-		{["x"] = 1, ["y"] = 0},
-		
-		{["x"] = -1, ["y"] = 1},
-		{["x"] = 0, ["y"] = 1},
-		{["x"] = 1, ["y"] = 1},
-	}
-	
-	for _, item in pairs(nodes) do	
-		local key = (current.position.x + item.x) .. '-' .. (current.position.y + item.y)
-		local node = peaks[key]
-		
-		if node ~= nil then
-			isEmpty = false
-			neighbors[key] = node
-		end
-	end
-	
-	if isEmpty then
-		return nil
-	else
-		return neighbors
-	end
-end
-
--- Usunięcie wierzchołka z listy
-function aStar:removePeak(openPeak, position)
-
-	-- Zbudowanie klucza
-	local key = position.x .. '-' .. position.y
-	
-	-- Usuniecie z listy
-	openPeak[key] = nil
-end
-
--- Wybranie losowego tekstu do wypowiedzenia
---
--- cid -> Identyfikator tego co wymawia tekst
--- arr -> tablica tekstów
-function speeches:random(cid, arr)
-	local text = arr[math.random(#arr)]
-	
-	if text == nil then
+-- Powrót na pozycje początkową
+function NpcGuard:moveToBasePosition(npcPosition)
+	if getDistanceBetween(npcPosition, self.options.basePosition) == 0 then
+		-- NPC jest na miejscu...
 		return
 	end
+
+	local path = self:findPath(npcPosition, self.options.basePosition, true)
 	
-	doCreatureSay(cid, text, TALKTYPE_ORANGE_1)
+	if path:step(self.options.cid) == false then
+		-- Nie odnaleziono sciezki ktora mozna dotrzec do przeciwnika
+		speeches:random(self.options.cid, self.options.text.backWayBlocked)
+		return
+	end
 end
-
-local keywordHandler = KeywordHandler:new()
-local npcHandler = NpcHandler:new(keywordHandler)
-NpcSystem.parseParameters(npcHandler)
-
-local researchPeak = 0
 
 -- Ustawienia skryptu
 local setting = {
@@ -327,7 +145,7 @@ local setting = {
 		
 		-- Potwory które będą ignorowane przez npc
 		ignoreMonsters = {
-			["Rat"] = true
+			["rat"] = true
 		}
 	},
 	
@@ -370,15 +188,82 @@ local npcText = {
 }
 
 function onCreatureAppear(cid)
-
-	-- Ustawienie konfiguracji konkretnego npc
-	
-	table.insert(setting.npcs, {
+	-- Konfiguracja dla npc
+	local knightGuard = NpcGuard:new({
+		config = {
+			-- Wielkość areny na której szukamy bandyty
+			scanArea = 6,
+			
+			-- Wielkość areny dla której szukamy drogi
+			findArea = 8,
+			
+			-- Konfiguracja ataku
+			attack = {
+				-- Jednostka czasu co ile nalezy uderzac potwora
+				speed = 1000, -- Wartość w milisekundach. Czyli 1000 ms = 1 sec
+			
+				-- Konfiguracja zadawanych obrażeń
+				damage = {
+					-- Minimalne obrażenia
+					min = 70,
+					
+					-- Maksymalne obrażenia
+					max = 120
+				},
+			},
+			
+			-- Maksymalna odległość na jaką możemy oddalić się od punktu docelowego
+			maxTravel = 8,
+			
+			-- Punkt docelowy w którym "stacjonujemy". Zostawić null
+			position = nil,
+			
+			-- Zapisany cache do zwiększenia wydajności odnajdywania drogi
+			cache = nil,
+			
+			-- Potwory które będą ignorowane przez npc
+			ignoreMonsters = {
+				["rat"] = true
+			}
+		},
+		text = {
+			-- Namierzono nowy cel :)
+			["find"] = {
+				"Brac go to bandyta!!",
+				"Duzo tego scierwa..",
+				"Nigdy nie naprawie tego zlewu"
+			},
+			
+			-- Cel wyszedł poza zasięg
+			["lost"] = {
+				"Ach, znow mi uciekl..",
+			},
+			
+			-- Cel został zabity
+			["kill"] = {
+				"Gin scierwo",
+			},
+			
+			-- Dobiegnełem do celu
+			["catch"] = {
+				"Zostajesz aresztowany",
+			},
+			
+			-- Zbyt dalekie oddalenie od celu
+			["back"] = {
+				"Nic z tego, wracam do obozowiska",
+			},
+			
+			-- Nie można odnaleźć scieżki powrotnej
+			["backWayBlocked"] = {
+				"Zastawiles mi droge.."
+			}
+		},
 		-- identyfikator
 		["cid"] = cid,
 		
 		-- Czy npc rozpoczął swoją prace. 0 - Nic nie robi, 1 - Ściga cel, 2 - wraca na miejsce docelowe
-		["running"] = 1,
+		["running"] = NPC_RUNNING_FOLLOW,
 		
 		-- Identyfikator odnalezionego celu
 		["creatureTarget"] = nil,
@@ -392,182 +277,174 @@ function onCreatureAppear(cid)
 		-- Kreatury które npc powinien ignorować. Wypełnia się to automatycznie na podstawie braku scieżki
 		ignoreCreatures = {}
 	})
-	
-	npcHandler:onCreatureAppear(cid)            
-end
 
-function onCreatureDisappear(cid)                
-	npcHandler:onCreatureDisappear(cid)         
-end
 
-function onCreatureMove(cid, oldPosition, newPosition)
-	return true
+	-- Dodanie NPC do listy
+	table.insert(npcs, knightGuard)
 end
 
 function onCreatureSay(cid, type, msg)      
 	if msg == "start" then
-		for _, creature in pairs(setting.npcs) do
-			creature.running = 1		
+		for _, npcGuard in pairs(npcs) do
+			npcGuard:stateStart()	
 		end
 	end
 	
 	if msg == "stop" then
-		for _, creature in pairs(setting.npcs) do
-			creature.running = 0
+		for _, npcGuard in pairs(npcs) do
+			npcGuard:stateStop()
 		end
 	end
-	
-	npcHandler:onCreatureSay(cid, type, msg)    
-	
 end
 
 function onThink()	
-	for _, creature in pairs(setting.npcs) do
+	for _, npcGuard in pairs(npcs) do		
 		local startTime = os.mtime()
-		researchPeak = 0
-	
-		eachNpc(creature)
-	
+		npcGuard:onThink()
 		local finishTime = os.mtime();
-		--print("Zbadanych wierzcholkow: " .. researchPeak)
-		--print("czas ruchu " .. finishTime - startTime .. " ms")
 	end
 end
 
-function eachNpc(creature)
-	if creature.running == 0 then
+function NpcGuard:onThink()
+	if not self:isStateActive() then
 		-- Nie wydano polecenia startu
 		return
 	end
 	
-	if creature.creatureTarget == nil then
+	if not self:isFoundTargetCreature() then
 		-- Szukamy celu
-		creature.creatureTarget = findCreature(creature)
+		self.options.creatureTarget = self:searchCreature()
 		
-	
-		if creature.creatureTarget == nil then
-			-- Jezeli w dalszym ciagu nie odnalezilismy celu to wracamy na miejsce docelowe
-			creature.running = 2
-		else
+		if self:isFoundTargetCreature() then
 			-- Podążamy za celem
-			creature.running = 1
-			creature.catch = false
-			speeches:random(creature.cid, npcText.find)
+			self:stateStart()
+			self.options.catch = false
+			speeches:random(self.options.cid, self.options.text.find)
 		end		
 	end
 	
-	if not isCreature(creature.creatureTarget) then
+	if self:isStateFollow() and not self:isFoundTargetCreature() then
 		-- Dziwne nagle istota znikneła
-		creature.creatureTarget = nil
+		self:resetTargetCreature()
 		
 		-- Zacznij wracac na miejsce docelowe
-		creature.running = 2
+		self:stateBack()
 	end
 	
-	local npcPosition = Creature(creature.cid):getPosition()
+	local npcPosition = Creature(self.options.cid):getPosition()
 	
 	-- Jeżeli odbiegliśmy zbyt daleko od docelowego miejsca to odpuszczamy
-	if getDistanceBetween(npcPosition, creature.basePosition) > setting.config.maxTravel and running == 1 then
-		creature.creatureTarget = nil
-		creature.running = 2
+	if self:isStateFollow() and getDistanceBetween(npcPosition, self.options.basePosition) > self.options.config.maxTravel then
+		self:resetTargetCreature()
+		self:stateStop()
 		
-		speeches:random(npc.cid, npcText.back)
+		speeches:random(self.options.cid, self.options.text.back)
 	end
 	
-	if creature.running == 1 then
-		local creaturePosition = Creature(creature.creatureTarget):getPosition()
+	if self:isStateFollow() and self:isFoundTargetCreature() then
+		local creaturePosition = Creature(self.options.creatureTarget):getPosition()
 			
 		-- Jeżeli dystans pomiędzy celem, a npc się zbytnio zwiększył to mu odpuszczamy :)
-		if getDistanceBetween(npcPosition, creaturePosition) > setting.config.maxTravel then
-			creature.creatureTarget = nil
-			creature.running = 2
+		if getDistanceBetween(npcPosition, creaturePosition) > self.options.config.maxTravel then
+			self:resetTargetCreature()
+			self:stateBack()
 			
-			speeches:random(creature.cid, npcText.lost)
+			speeches:random(npc.cid, npcText.lost)
 			return 
 		end
 		
-		if creature.running == 1 then
+		if self:isStateFollow() then
 			-- Biegniemy do celu
-			if goToHunt(creature, npcPosition, creaturePosition) == false then
+			if self:moveToTarget(npcPosition, creaturePosition) == false then
 				-- Odnalezienie celu nie powiodlo sie wiec wroc do poszukiwan
-				creature.ignoreCreatures[Creature(creature.creatureTarget):getId()] = 1
+				self.ignoreCreatures[Creature(self.creatureTarget):getId()] = 1
 				
-				creature.creatureTarget = nil
-				creature.running = 2
+				self:resetTargetCreature()
+				self:stateBack()
 			else	
 				-- Ruch się powiódł możemy przeczyścić ignorowane kreatury
-				creature.ignoreCreatures = {}
+				self:resetIgnoreCreatures()
 			end
 		end
 	end
 		
-	if creature.running == 2 then
+	if self:isStateBack() then
 		-- Wracamy do punktu startowego
-		backToPosition(creature, npcPosition)
-	end
-end
-
--- Powrót na pozycje
-function backToPosition(npc, npcPosition)
-	if getDistanceBetween(npcPosition, npc.basePosition) == 0 then
-		-- NPC jest na miejscu...
-		return
-	end
-
-	local path = findPath(npc, npcPosition, npc.basePosition, true)
-	
-	if path:step(npc.cid) == false then
-		-- Nie odnaleziono sciezki ktora mozna dotrzec do przeciwnika
-		speeches:random(npc.cid, npcText.backWayBlocked)
-		return
+		self:moveToBasePosition(npcPosition)
 	end
 end
 
 -- Ściganie ofiary
-function goToHunt(npc, npcPosition, creaturePosition)	
+function NpcGuard:moveToTarget(npcPosition, creaturePosition)	
 	if getDistanceBetween(npcPosition, creaturePosition) == 1 then
 		-- Stoimy obok gracza
-		doTargetCombatHealth(npc.cid, npc.creatureTarget, COMBAT_PHYSICALDAMAGE, -20, -40, CONST_ME_HITAREA)
-		
-		-- Czyscimy cache
-		npc.cache = nil
-		
-		if getCreatureHealth(npc.creatureTarget) <= 0 then
-			speeches:random(npc.cid, npcText.kill)
-			npc.creatureTarget = nil
-		else 
-			if not npc.catch then
-				npc.catch = true
-				speeches:random(npc.cid, npcText.catch)
-			end
+		if self.eventId == nil then
+			self.eventId = addEvent(self.attack, self.options.config.attack.speed, self)
 		end
 		
+		-- Czyscimy cache
+		self.options.cache = nil		
 		return
 	end
 	
-	local path = findPath(npc, npcPosition, creaturePosition, false)
+	local path = self:findPath(npcPosition, creaturePosition, false)
 	
-	return path:step(npc.cid)
+	return path:step(self.options.cid)
+end
+
+-- Obsługa zaatakowania przeciwnika
+function NpcGuard:attack(npc)
+
+	if not self:isFoundTargetCreature() then
+		-- Brak celu do zaatakowania
+		self.eventId = nil
+		return
+	end
+	
+	local npcPosition = Creature(self.options.cid):getPosition()
+	local creaturePosition = Creature(self.options.creatureTarget):getPosition()
+		
+	if getDistanceBetween(npcPosition, creaturePosition) ~= 1 then
+		-- Nie stoimy obok postaci wiec przestajemy atakowac
+		self.eventId = nil
+		return
+	end
+	
+	doTargetCombatHealth(self.options.cid, self.options.creatureTarget, COMBAT_PHYSICALDAMAGE, self.options.config.attack.damage.min * -1, self.options.config.attack.damage.max * -1, CONST_ME_HITAREA)
+	
+	
+	if getCreatureHealth(self.options.creatureTarget) <= 0 then
+		speeches:random(self.options.cid, npcText.kill)
+		self:resetTargetCreature()
+	else 
+		if not self.options.catch then
+			self.options.catch = true
+			speeches:random(self.options.cid, self.options.text.catch)
+		end
+	end
+	
+	-- Dodajemy kolejny atak do kolejki
+	self.eventId = addEvent(attack, self.options.config.attack.speed, self)
 end
 
 -- Szukanie sciezki
-function findPath(npc, npcPosition, creaturePosition, lastPosition)
+function NpcGuard:findPath(npcPosition, creaturePosition, lastPosition)
 
-	if npc.cache ~= nil and npc.cache:isEmpty() == false then		
+	if self.options.cache ~= nil and self.options.cache:isEmpty() == false then		
 		-- Zwracamy cache
-		return npc.cache
+		return self.options.cache
 	end
 	
 	pathFinding = aStar:new()
 	
 	-- W zależności od wywołania szukamy innego miejsca docelowego
 	if lastPosition then
-		npc.cache = pathFinding:findToOccupy(npcPosition, creaturePosition, npc.basePosition, setting.config.findArea)
+		self.options.cache = pathFinding:findToOccupy(npcPosition, creaturePosition, self.options.basePosition, self.options.config.findArea)
 	else
-		npc.cache = pathFinding:findToAttack(npcPosition, creaturePosition, npc.basePosition, setting.config.findArea)
+		self.options.cache = pathFinding:findToAttack(npcPosition, creaturePosition, self.options.basePosition, self.options.config.findArea)
 	end
 	
-	return npc.cache
+	return self.options.cache
 end
 
 -- Obliczenie kosztu podróży na kafelek
@@ -610,35 +487,19 @@ function calculateCost(current, peak, targetPosition)
 	return 140
 end
 
--- Poszukiwanie kreatury
-function findCreature(npc)
+-- Funkcja pomocna podczas debugowania
+function debug(title, message)
 
-	local spectators = getSpectators(npc.basePosition, setting.config.scanArea, setting.config.scanArea, false, false)
-	
-	if spectators == nil then
-		return nil
+	print("########################")
+	if title ~= nil then
+		print("# Title: " .. title)
 	end
 	
-	for i = 1, #spectators do
-		local spectator = Creature(spectators[i])
-		
-		if npc.ignoreCreatures[spectator:getId()] ~= 1 then 
-			-- Istota nie moze byc na ignorowanej liscie
-			print(spectator:getName())
-			if spectator:isMonster() and setting.config.ignoreMonsters[spectator:getName()] ~= true then
-				-- Odnalezliśmy potwora
-				return spectator
-			end
-			
-			if spectator:isPlayer() and spectator:getSkull() == (SKULL_WHITE or SKULL_RED) then
-				-- Odnalezliśmy gracza
-				return spectator
-			end
-		end
+	if message ~= nil then
+		print("# Message: " .. message)
 	end
-
-	-- Brak odnalezionych celów
-	return nil
+	
+	print("########################")
 end
 
 function dump(o)
