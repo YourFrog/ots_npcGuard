@@ -18,10 +18,11 @@ end
 -- basePosition -> centralna pozycja od której liczony jest zasięg areny 
 -- startPosition -> Pozycja od której rozpoczynamy szukanie
 -- targetPosition -> Pozycja do której zmierzamy
--- areaSize -> wielkość areny w której poszukujemy scieżki. 
-function aStar:findToAttack(startPosition, targetPosition, basePosition, areaSize)
+-- areaSize -> wielkość areny w której poszukujemy scieżki.
+-- heuristic -> funkcja heurestyczna do liczenia dystansu
+function aStar:findToAttack(startPosition, targetPosition, basePosition, areaSize, heuristic)
 
-	local path = self:findToOccupy(startPosition, targetPosition, basePosition, areaSize)
+	local path = self:findToOccupy(startPosition, targetPosition, basePosition, areaSize, heuristic)
 	
 	return path
 end
@@ -32,8 +33,9 @@ end
 -- basePosition -> centralna pozycja od której liczony jest zasięg areny 
 -- startPosition -> Pozycja od której rozpoczynamy szukanie
 -- targetPosition -> Pozycja do której zmierzamy
--- areaSize -> wielkość areny w której poszukujemy scieżki. 
-function aStar:findToOccupy(startPosition, targetPosition, basePosition, areaSize)
+-- areaSize -> wielkość areny w której poszukujemy scieżki.
+-- heuristic -> funkcja heurestyczna do liczenia dystansu
+function aStar:findToOccupy(startPosition, targetPosition, basePosition, areaSize, heuristic)
 	-- Wierchołki wytypowane do sprawdzenia
 	local openPeak = { 
 		[startPosition.x .. "-" .. startPosition.y] = {["position"] = startPosition, ["cost"] = 0, ["path"] = nil}
@@ -61,7 +63,7 @@ function aStar:findToOccupy(startPosition, targetPosition, basePosition, areaSiz
 				end
 							
 				-- Dodajemy do wierzchołka scieżkę jak do niego doszliśmy i obliczamy koszt dotarcia
-				local cost = calculateCost(current, peak, creaturePosition)
+				local cost = heuristic(current, peak, creaturePosition)
 				
 				if cost ~= nil then
 					-- Musi byc koszt zebysmy uznali kafel za "chodzacy"
